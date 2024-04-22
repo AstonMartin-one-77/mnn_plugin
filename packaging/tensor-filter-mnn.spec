@@ -1,13 +1,13 @@
-Name:		tensor-filter-example
-Summary:	NNStreamer tensor-filter subplugin for example
+Name:		tensor-filter-mnn
+Summary:	NNStreamer tensor-filter subplugin for MNN delegate
 Version:	1.0.0
 Release:	0
 Group:		Development/Libraries
 Packager:	MyungJoo Ham <myungjoo.ham@samsung.com>
 # You may change the License to anything you want (Proprietary is allowed)
-License:	Proprietary
-Source0:	tensor-filter-example-%{version}.tar.gz
-Source1001:	tensor-filter-example.manifest
+License:	MIT
+Source0:	tensor-filter-mnn-%{version}.tar.gz
+Source1001:	tensor-filter-mnn.manifest
 
 Requires:	nnstreamer
 BuildRequires:	nnstreamer-devel
