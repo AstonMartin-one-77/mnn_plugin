@@ -56,7 +56,7 @@ class mnn_subplugin final : public tensor_filter_subplugin
     static const char *name;
     static const GstTensorFilterFrameworkInfo info; /**< Framework info */
     GstTensorsInfo inputInfo; /**< Input tensors metadata */
-    GstTensorsInfo outputInfo; /**< Output tensors metadata */    
+    GstTensorsInfo outputInfo; /**< Output tensors metadata */  
 
     static mnn_subplugin *registeredRepresentation;
 
@@ -66,6 +66,8 @@ class mnn_subplugin final : public tensor_filter_subplugin
     std::unique_ptr<std::map<std::string, MNN::Tensor*>> outputMap;
 
     // std::unique_ptr<MNN::CV::ImageProcess> converter;
+
+    void convertTensorInfo (std::map<std::string, MNN::Tensor*> &modelInfo, GstTensorsInfo &info);
 };
 
 /**
@@ -281,6 +283,86 @@ int mnn_subplugin::eventHandler (event_ops ops, GstTensorFilterFrameworkEventDat
     UNUSED (ops);
     UNUSED (data);
     return -ENOENT;
+}
+
+/**
+ * @brief Convert MNN model info to GST Tensor info
+ */
+void mnn_subplugin::convertTensorInfo (std::map<std::string, MNN::Tensor*> &mnnInfo, GstTensorsInfo &info)
+{
+    gst_tensors_info_init (std::addressof (info));
+    info.num_tensors = (unsigned int) mnnInfo->size();
+
+    unsigned int idx = 0;
+    for (auto &itr : mnnInfo) {
+        GstTensorInfo *_info = gst_tensors_info_get_nth_info (std::addressof (info), idx++);
+
+        switch(itr.second->getType().code) {
+            case halide_type_int:
+                if (64U == itr.second->getType().bits) {
+                    _info->type = _NNS_INT64;
+                } else if (32U == itr.second->getType().bits) {
+                    _info->type = _NNS_INT32;
+                } else if (16U == itr.second->getType().bits) {
+                    _info->type = _NNS_INT16;
+                } else if (8U == itr.second->getType().bits) {
+                    _info->type = _NNS_INT8;
+                } else {
+                    throw std::invalid_argument (
+                        std::string ("Usupported data width of MNN tensor[") + itr->first + "]: " +
+                        + ", Found in model = " + std::to_string (itr.second->getType().bits));
+                }
+            break;
+            case halide_type_uint:
+                if (64U == itr.second->getType().bits) {
+                    _info->type = _NNS_UINT64;
+                } else if (32U == itr.second->getType().bits) {
+                    _info->type = _NNS_UINT32;
+                } else if (16U == itr.second->getType().bits) {
+                    _info->type = _NNS_UINT16;
+                } else if (8U == itr.second->getType().bits) {
+                    _info->type = _NNS_UINT8;
+                } else {
+                    throw std::invalid_argument (
+                        std::string ("Usupported data width of MNN tensor[") + itr->first + "]: " +
+                        + ", Found in model = " + std::to_string (itr.second->getType().bits));
+                }
+            break;
+            case halide_type_float:
+                if (64U == itr.second->getType().bits) {
+                    _info->type = _NNS_FLOAT64;
+                } else if (32U == itr.second->getType().bits) {
+                    _info->type = _NNS_FLOAT32;
+                } else if (16U == itr.second->getType().bits) {
+                    _info->type = _NNS_FLOAT16;
+                } else {
+                    throw std::invalid_argument (
+                        std::string ("Usupported data width of MNN tensor[") + itr->first + "]: " +
+                        + ", Found in model = " + std::to_string (itr.second->getType().bits));
+                }
+            break;
+            // case halide_type_bfloat:
+            // break;
+            default:
+                throw std::invalid_argument (
+                    std::string ("Usupported data type of MNN tensor[") + itr->first + "]: " +
+                    + ", Found in model = " + std::to_string (itr.second->getType().code));
+            break;
+        }
+
+        if (itr.second->shape().size() > NNS_TENSOR_RANK_LIMIT)
+            throw std::invalid_argument (
+                    std::string ("Rank limit (NNStreamer) is excessed by MNN tensor[") + itr->first + "]: " +
+                    + ", Found in model = " + std::to_string (itr.second->shape().size()));
+        
+        for (int i = 0; i < itr.second->shape().size(); ++i)
+            _info->dimension[i] = itr.second->shape()[i]; /* TODO: investigate correct order of dim translation */
+
+        for (int i = itr.second->shape(); i < NNS_TENSOR_RANK_LIMIT; ++i)
+            _info->dimension[i] = 0; /* set to 0 all other dims */
+
+        _info->name = g_strdup (itr.first);
+    }
 }
 
 } /* namespace tensorFilter_mnn */
