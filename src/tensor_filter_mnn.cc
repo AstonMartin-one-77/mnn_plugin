@@ -52,8 +52,8 @@ class mnn_subplugin final : public tensor_filter_subplugin
     int eventHandler (event_ops ops, GstTensorFilterFrameworkEventData &data);
 
     private:
-    static const char *name;
     bool empty_model; /**< Empty (not initialized) model flag */
+    static const char *name;
     static const GstTensorFilterFrameworkInfo info; /**< Framework info */
     GstTensorsInfo inputInfo; /**< Input tensors metadata */
     GstTensorsInfo outputInfo; /**< Output tensors metadata */    
@@ -62,12 +62,14 @@ class mnn_subplugin final : public tensor_filter_subplugin
 
     Session* session;
     std::unique_ptr<MNN::Interpreter> interpreter;
-    const std::map<std::string, MNN::Tensor*> &inputMap;
-    const std::map<std::string, MNN::Tensor*> &outputMap;
+    std::unique_ptr<std::map<std::string, MNN::Tensor*>> inputMap;
+    std::unique_ptr<std::map<std::string, MNN::Tensor*>> outputMap;
+
+    // std::unique_ptr<MNN::CV::ImageProcess> converter;
 };
 
 /**
- * @brief Describe framework information.
+ * @brief Describe framework information
  */
 const GstTensorFilterFrameworkInfo mnn_subplugin::info = 
 { 
@@ -132,8 +134,51 @@ void mnn_subplugin::configure_instance (const GstTensorFilterProperties *prop)
     ScheduleConfig conf;
     mnn_subplugin::session = interpreter->createSession(conf);
 
-    mnn_subplugin::inputMap = interpreter->getSessionInputAll(mnn_subplugin::session);
-    mnn_subplugin::inputMap = interpreter->getSessionOutputAll(mnn_subplugin::session);
+    mnn_subplugin::inputMap =  std::unique_ptr<std::map<std::string, MNN::Tensor*>>(interpreter->getSessionInputAll(mnn_subplugin::session));
+    mnn_subplugin::outputMap = std::unique_ptr<std::map<std::string, MNN::Tensor*>>(interpreter->getSessionOutputAll(mnn_subplugin::session));
+
+    if (inputInfo.num_tensors != inputMap->size())
+        throw std::invalid_argument (
+            std::string ("Wrong number of input tensor")
+            + ": Found in argument = " + std::to_string (inputInfo.num_tensors)
+            + ", Found in model file = " + std::to_string (inputMap->size ()));
+    
+    // int idx = 0;
+    // for (auto const &itr : mnn_subplugin::inputMap) {
+    //     GstTensorInfo &info = mnn_subplugin::inputInfo.info[idx++];
+    //     for (int i = 0; info.dimension[i]; ++i) {
+    //         if (itr.second->shape ()[i] != info.dimension[i])
+    //             throw std::invalid_argument (
+    //                 std::string ("Wrong shape of input tensor")
+    //                 + "[" + itr.first + "]"
+    //                 + ": Found in argument = " + std::to_string (info.dimension[i])
+    //                 + ", Found in model file = " + std::to_string (itr.second->shape ()[i]));
+    //     }
+    // }
+
+    if (outputInfo.num_tensors != outputMap->size())
+        throw std::invalid_argument (
+            std::string ("Wrong number of input tensor")
+            + ": Found in argument = " + std::to_string (inputInfo.num_tensors)
+            + ", Found in model file = " + std::to_string (inputMap->size ()));
+    
+    // idx = 0;
+    // for (auto const &itr : mnn_subplugin::outputMap) {
+    //     GstTensorInfo &info = mnn_subplugin::outputInfo.info[idx++];
+    //     for (int i = 0; info.dimension[i]; ++i) {
+    //         if (itr.second->shape ()[i] != info.dimension[i])
+    //             throw std::invalid_argument (
+    //                 std::string ("Wrong shape of output tensor")
+    //                 + "[" + itr.first + "]"
+    //                 + ": Found in argument = " + std::to_string (info.dimension[i])
+    //                 + ", Found in model file = " + std::to_string (itr.second->shape ()[i]));
+    //     }
+    // }
+
+    // MNN::CV::ImageProcess::Config img_cfg;
+    // converter = std::unique_ptr<MNN::CV::ImageProcess>(MNN::CV::ImageProcess::create(img_cfg));
+
+    empty_model = false;
 }
 
 /**
@@ -147,8 +192,27 @@ void mnn_subplugin::invoke (const GstTensorMemory *input, GstTensorMemory *outpu
             "its \"invoke\" method is called. This may be an internal bug of "
             "nnstreamer or mnn-subplugin unless if you have directly accessed "
             "mnn-subplugin.");
-    
+    int inIdx = 0;
+    for (auto &itr : mnn_subplugin::inputMap) {
+        if (itr.second->size () != input[inIdx].size)
+            throw std::invalid_argument (
+                std::string ("Wrong data size of input tensor[") + itr->first + "]: " +
+                + ": Found in argument = " + std::to_string (input[inIdx].size)
+                + ", Found in model = " + std::to_string (itr.second->size ()));
+        memcpy(itr.second->host (), input[inIdx++].data, itr.second->size ());
+    }
 
+    mnn_subplugin::interpreter->runSession (mnn_subplugin::session);
+
+    int outIdx = 0;
+    for (auto &itr : mnn_subplugin::outputMap) {
+        if (itr.second->size () != output[outIdx].size)
+            throw std::invalid_argument (
+                std::string ("Wrong data size of output tensor[") + itr->first + "]: " +
+                + ": Found in argument = " + std::to_string (input[outIdx].size)
+                + ", Found in model = " + std::to_string (itr.second->size ()));
+        memcpy(output[outIdx++].data, itr.second->host (), itr.second->size ());
+    }
 }
 
 /**
@@ -160,7 +224,7 @@ void mnn_subplugin::init_filter_mnn (void)
 }
 
 /**
- * @brief Destruct the subplugin
+ * @brief Destruct subplugin
  */
 void mnn_subplugin::fini_filter_mnn (void)
 {
@@ -182,6 +246,41 @@ void init_filter_mnn ()
 void fini_filter_mnn ()
 {
     mnn_subplugin::fini_filter_mnn ();
+}
+
+/**
+ * @brief Method to get the information of subplugin
+ */
+void mnn_subplugin::getFrameworkInfo (GstTensorFilterFrameworkInfo &info)
+{
+    info = mnn_subplugin::info;
+}
+
+/**
+ * @brief Get MNN model information
+ */
+int mnn_subplugin::getModelInfo (model_info_ops ops, GstTensorsInfo &in_info, GstTensorsInfo &out_info)
+{
+  switch (ops) {
+    case GET_IN_OUT_INFO:
+      gst_tensors_info_copy (std::addressof (in_info), std::addressof (inputInfo));
+      gst_tensors_info_copy (std::addressof (out_info), std::addressof (outputInfo));
+      break;
+    case SET_INPUT_INFO:
+    default:
+      return -ENOENT;
+  }
+  return 0;
+}
+
+/**
+ * @brief Method to handle events
+ */
+int mnn_subplugin::eventHandler (event_ops ops, GstTensorFilterFrameworkEventData &data)
+{
+    UNUSED (ops);
+    UNUSED (data);
+    return -ENOENT;
 }
 
 } /* namespace tensorFilter_mnn */
